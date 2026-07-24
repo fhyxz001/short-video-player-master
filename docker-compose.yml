@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: video-player-backend:latest
+    container_name: video-player-backend
+    ports:
+      - "7978:7978"
+    volumes:
+      - ./backend/config:/app/config
+      - /d/videos:/videos
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: video-player-frontend:latest
+    container_name: video-player-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

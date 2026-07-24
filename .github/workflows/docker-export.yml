@@ -1,0 +1,145 @@
+name: Docker Export (Offline Image)
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_tag:
+        description: "Tag for the backend image"
+        required: false
+        default: "latest"
+      frontend_tag:
+        description: "Tag for the frontend image"
+        required: false
+        default: "latest"
+  push:
+    branches: [main, master]
+
+env:
+  BACKEND_IMAGE: video-player-backend
+  FRONTEND_IMAGE: video-player-frontend
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image tags
+        id: tags
+        shell: bash
+        run: |
+          SHA="${{ github.sha }}"
+          SHORT_SHA="${SHA::7}"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BTAG="${{ inputs.backend_tag }}"
+            FTAG="${{ inputs.frontend_tag }}"
+          else
+            BTAG="sha-${SHORT_SHA}"
+            FTAG="sha-${SHORT_SHA}"
+          fi
+
+          echo "backend_tag=${BTAG}" >> "$GITHUB_OUTPUT"
+          echo "frontend_tag=${FTAG}" >> "$GITHUB_OUTPUT"
+          echo "backend_ghcr=${{ env.REGISTRY }}/${{ github.repository }}/${{ env.BACKEND_IMAGE }}:${BTAG}" >> "$GITHUB_OUTPUT"
+          echo "frontend_ghcr=${{ env.REGISTRY }}/${{ github.repository }}/${{ env.FRONTEND_IMAGE }}:${FTAG}" >> "$GITHUB_OUTPUT"
+
+      # ──────────────────────────────────────────────
+      # Build images
+      # ──────────────────────────────────────────────
+
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.backend
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ steps.tags.outputs.backend_tag }}
+            ${{ env.BACKEND_IMAGE }}:latest
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=min,scope=backend
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.frontend
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ steps.tags.outputs.frontend_tag }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+          load: true
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=min,scope=frontend
+
+      # ──────────────────────────────────────────────
+      # Export offline tarballs
+      # ──────────────────────────────────────────────
+
+      - name: Export backend image
+        shell: bash
+        run: |
+          docker save ${{ env.BACKEND_IMAGE }}:${{ steps.tags.outputs.backend_tag }} \
+            | gzip > ${{ env.BACKEND_IMAGE }}.tar.gz
+
+      - name: Export frontend image
+        shell: bash
+        run: |
+          docker save ${{ env.FRONTEND_IMAGE }}:${{ steps.tags.outputs.frontend_tag }} \
+            | gzip > ${{ env.FRONTEND_IMAGE }}.tar.gz
+
+      - name: List artifacts
+        shell: bash
+        run: ls -lh *.tar.gz
+
+      # ──────────────────────────────────────────────
+      # Upload artifacts
+      # ──────────────────────────────────────────────
+
+      - name: Upload backend image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BACKEND_IMAGE }}_${{ steps.tags.outputs.backend_tag }}
+          path: ${{ env.BACKEND_IMAGE }}.tar.gz
+          retention-days: 7
+
+      - name: Upload frontend image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FRONTEND_IMAGE }}_${{ steps.tags.outputs.frontend_tag }}
+          path: ${{ env.FRONTEND_IMAGE }}.tar.gz
+          retention-days: 7
+
+      # ──────────────────────────────────────────────
+      # (Optional) Push to GHCR so images are also
+      # available via registry pull
+      # ──────────────────────────────────────────────
+
+      # Uncomment the lines below and set
+      # ACTIONS_STEP_DEBUG / GITHUB_TOKEN permissions
+      # if you also want registry push:
+      #
+      # - name: Log in to GHCR
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: ${{ env.REGISTRY }}
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
+      #
+      # - name: Push backend image to GHCR
+      #   run: |
+      #     docker tag ${{ env.BACKEND_IMAGE }}:${{ steps.tags.outputs.backend_tag }} \
+      #       ${{ steps.tags.outputs.backend_ghcr }}
+      #     docker push ${{ steps.tags.outputs.backend_ghcr }}
+      #
+      # - name: Push frontend image to GHCR
+      #   run: |
+      #     docker tag ${{ env.FRONTEND_IMAGE }}:${{ steps.tags.outputs.frontend_tag }} \
+      #       ${{ steps.tags.outputs.frontend_ghcr }}
+      #     docker push ${{ steps.tags.outputs.frontend_ghcr }}

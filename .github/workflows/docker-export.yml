@@ -3,20 +3,15 @@ name: Docker Export (Offline Image)
 on:
   workflow_dispatch:
     inputs:
-      backend_tag:
-        description: "Tag for the backend image"
-        required: false
-        default: "latest"
-      frontend_tag:
-        description: "Tag for the frontend image"
+      image_tag:
+        description: "Tag for the image"
         required: false
         default: "latest"
   push:
     branches: [main, master]
 
 env:
-  BACKEND_IMAGE: video-player-backend
-  FRONTEND_IMAGE: video-player-frontend
+  IMAGE_NAME: video-player
   REGISTRY: ghcr.io
 
 jobs:
@@ -30,95 +25,62 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Compute image tags
+      - name: Compute image tag
         id: tags
         shell: bash
         run: |
-          SHA="${{ github.sha }}"
-          SHORT_SHA="${SHA::7}"
-
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            BTAG="${{ inputs.backend_tag }}"
-            FTAG="${{ inputs.frontend_tag }}"
+            TAG="${{ inputs.image_tag }}"
           else
-            BTAG="sha-${SHORT_SHA}"
-            FTAG="sha-${SHORT_SHA}"
+            SHORT_SHA="${{ github.sha }}" && SHORT_SHA="${SHORT_SHA::7}"
+            TAG="sha-${SHORT_SHA}"
           fi
-
-          echo "backend_tag=${BTAG}" >> "$GITHUB_OUTPUT"
-          echo "frontend_tag=${FTAG}" >> "$GITHUB_OUTPUT"
-          echo "backend_ghcr=${{ env.REGISTRY }}/${{ github.repository }}/${{ env.BACKEND_IMAGE }}:${BTAG}" >> "$GITHUB_OUTPUT"
-          echo "frontend_ghcr=${{ env.REGISTRY }}/${{ github.repository }}/${{ env.FRONTEND_IMAGE }}:${FTAG}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "ghcr=${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}:${TAG}" >> "$GITHUB_OUTPUT"
 
       # ──────────────────────────────────────────────
-      # Build images
+      # Build image
       # ──────────────────────────────────────────────
 
-      - name: Build backend image
+      - name: Build image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile.backend
+          file: Dockerfile
           tags: |
-            ${{ env.BACKEND_IMAGE }}:${{ steps.tags.outputs.backend_tag }}
-            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:latest
           load: true
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=min,scope=backend
-
-      - name: Build frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.frontend
-          tags: |
-            ${{ env.FRONTEND_IMAGE }}:${{ steps.tags.outputs.frontend_tag }}
-            ${{ env.FRONTEND_IMAGE }}:latest
-          load: true
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=min,scope=frontend
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
 
       # ──────────────────────────────────────────────
-      # Export offline tarballs
+      # Export offline tarball
       # ──────────────────────────────────────────────
 
-      - name: Export backend image
+      - name: Export image
         shell: bash
         run: |
-          docker save ${{ env.BACKEND_IMAGE }}:${{ steps.tags.outputs.backend_tag }} \
-            | gzip > ${{ env.BACKEND_IMAGE }}.tar.gz
+          docker save ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.tag }} \
+            | gzip > ${{ env.IMAGE_NAME }}.tar.gz
 
-      - name: Export frontend image
-        shell: bash
-        run: |
-          docker save ${{ env.FRONTEND_IMAGE }}:${{ steps.tags.outputs.frontend_tag }} \
-            | gzip > ${{ env.FRONTEND_IMAGE }}.tar.gz
-
-      - name: List artifacts
+      - name: List artifact
         shell: bash
         run: ls -lh *.tar.gz
 
       # ──────────────────────────────────────────────
-      # Upload artifacts
+      # Upload artifact
       # ──────────────────────────────────────────────
 
-      - name: Upload backend image artifact
+      - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BACKEND_IMAGE }}_${{ steps.tags.outputs.backend_tag }}
-          path: ${{ env.BACKEND_IMAGE }}.tar.gz
-          retention-days: 7
-
-      - name: Upload frontend image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.FRONTEND_IMAGE }}_${{ steps.tags.outputs.frontend_tag }}
-          path: ${{ env.FRONTEND_IMAGE }}.tar.gz
+          name: ${{ env.IMAGE_NAME }}_${{ steps.tags.outputs.tag }}
+          path: ${{ env.IMAGE_NAME }}.tar.gz
           retention-days: 7
 
       # ──────────────────────────────────────────────
-      # (Optional) Push to GHCR so images are also
-      # available via registry pull
+      # (Optional) Push to GHCR
       # ──────────────────────────────────────────────
 
       # Uncomment the lines below and set
@@ -132,14 +94,8 @@ jobs:
       #     username: ${{ github.actor }}
       #     password: ${{ secrets.GITHUB_TOKEN }}
       #
-      # - name: Push backend image to GHCR
+      # - name: Push image to GHCR
       #   run: |
-      #     docker tag ${{ env.BACKEND_IMAGE }}:${{ steps.tags.outputs.backend_tag }} \
-      #       ${{ steps.tags.outputs.backend_ghcr }}
-      #     docker push ${{ steps.tags.outputs.backend_ghcr }}
-      #
-      # - name: Push frontend image to GHCR
-      #   run: |
-      #     docker tag ${{ env.FRONTEND_IMAGE }}:${{ steps.tags.outputs.frontend_tag }} \
-      #       ${{ steps.tags.outputs.frontend_ghcr }}
-      #     docker push ${{ steps.tags.outputs.frontend_ghcr }}
+      #     docker tag ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.tag }} \
+      #       ${{ steps.tags.outputs.ghcr }}
+      #     docker push ${{ steps.tags.outputs.ghcr }}
